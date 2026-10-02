@@ -48,13 +48,13 @@ use std::process;
 use librespot_core::authentication::Credentials;
 use librespot_core::cache::Cache;
 use librespot_core::config::SessionConfig;
-use url::Url;
 use librespot_core::Session;
 
 // Phase 04.3: ZeroConf Discovery imports
 use librespot_discovery::{DeviceType, Discovery};
 use futures_util::StreamExt;
 use tokio::time::{timeout, Duration};
+use url::Url;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -707,6 +707,11 @@ pub(crate) fn parse_proxy_arg(s: &str) -> Result<Url, String> {
     if port == 0 {
         return Err("invalid port".into());
     }
+    // Url::parse drops the default port, and librespot connects via
+    // socket_addrs(|| None), which would then fail at connect time.
+    if port == 80 {
+        return Err("port 80 is not supported for the proxy (librespot limitation); use another port".into());
+    }
     let url = Url::parse(&format!("http://{rest}")).map_err(|e| format!("{e}"))?;
     if url.host_str().is_none() {
         return Err("missing host".into());
@@ -724,14 +729,18 @@ mod proxy_tests {
     #[test] fn proxy_rejects_no_port() { assert!(parse_proxy_arg("http://host").is_err()); }
     #[test] fn proxy_rejects_ipv6_no_port() { assert!(parse_proxy_arg("http://[::1]").is_err()); }
     #[test] fn proxy_rejects_port_zero() { assert!(parse_proxy_arg("http://host:0").is_err()); }
+    #[test] fn proxy_rejects_port_80() {
+        assert!(parse_proxy_arg("http://h:80").is_err());
+        assert!(parse_proxy_arg("http://[::1]:80").is_err());
+    }
     #[test] fn proxy_rejects_path() { assert!(parse_proxy_arg("http://host:3128/x").is_err()); }
     #[test] fn proxy_rejects_https() { assert!(parse_proxy_arg("https://host:3128").is_err()); }
     #[test] fn proxy_rejects_socks() { assert!(parse_proxy_arg("socks5://host:1080").is_err()); }
     #[test] fn proxy_rejects_userinfo() { assert!(parse_proxy_arg("http://u:p@host:3128").is_err()); }
     #[test] fn session_config_with_proxy() {
         let u = parse_proxy_arg("http://p:3128").unwrap();
-        assert_eq!(base_session_config(Some(&u)).proxy, Some(u));
-        assert_eq!(base_session_config(Some(&parse_proxy_arg("http://p:3128").unwrap())).ap_port, None);
+        assert_eq!(base_session_config(Some(&u)).proxy, Some(u.clone()));
+        assert_eq!(base_session_config(Some(&u)).ap_port, None);
     }
     #[test] fn session_config_without_proxy() { assert!(base_session_config(None).proxy.is_none()); }
 }
