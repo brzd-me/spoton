@@ -14,7 +14,7 @@ use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(cstring);
 use Slim::Utils::Timers;
-use Slim::Networking::SimpleAsyncHTTP;
+require Plugins::SpotOn::Net;
 
 use Plugins::SpotOn::Plugin;
 use Plugins::SpotOn::Unified::Daemon;
@@ -486,7 +486,7 @@ sub _streamAlivePoll {
             $helper->_healthCheckCount($count);
 
             if ($count % 12 == 0) {
-                Slim::Networking::SimpleAsyncHTTP->new(
+                Plugins::SpotOn::Net->http(
                     sub { $class->_onHealthResponse($helper, @_) },
                     sub { $class->_onHealthError($helper, @_) },
                     { timeout => 5 }

@@ -761,4 +761,19 @@ SKIP: {
     set_pref(networkProxy => '');
 }
 
+# ---------------------------------------------------------------------------
+# guard: no plugin code may construct Slim::Networking::SimpleAsyncHTTP directly
+# ---------------------------------------------------------------------------
+{
+    require File::Find;
+    my @offenders;
+    File::Find::find(sub {
+        return unless /\.pm$/ && $File::Find::name !~ m{/Plugins/SpotOn/Net(?:/|\.pm$)};
+        open my $fh, '<', $_ or die "$File::Find::name: $!";
+        local $/; my $src = <$fh>;
+        push @offenders, $File::Find::name if $src =~ /Slim::Networking::SimpleAsyncHTTP\s*->\s*new/;
+    }, "$Bin/../Plugins/SpotOn");
+    is_deeply([sort @offenders], [], 'all HTTP goes through Plugins::SpotOn::Net');
+}
+
 done_testing;

@@ -904,9 +904,9 @@ sub _pkceLoadVerifierDataFromState {
 sub _pkceFinishAuth {
     my ($httpClient, $response, $tokenData, $clientId, $isJson) = @_;
 
-    require Slim::Networking::SimpleAsyncHTTP;
+    require Plugins::SpotOn::Net;
 
-    Slim::Networking::SimpleAsyncHTTP->new(
+    Plugins::SpotOn::Net->http(
         sub {
             my $http    = shift;
             my $profile = eval { from_json($http->content) };
