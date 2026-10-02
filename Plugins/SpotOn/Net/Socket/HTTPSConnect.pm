@@ -36,6 +36,11 @@ sub new {
     my $proxyPort = delete $args{ProxyPort};
     my $host      = $args{Host};
     my $port      = $args{PeerPort} || 443;
+    # The caller's Timeout (LMS: request Timeout, Async::open default
+    # remotestreamtimeout) becomes the socket's io_socket_timeout again once
+    # the handshake is done -- LMS Async::write_async arms its "Timed out
+    # waiting for data" timer from it, as with Net::HTTPS::NB::new.
+    my $ioTimeout = $args{Timeout} || 30;
     my $deadline  = Time::HiRes::time() + HANDSHAKE_TIMEOUT;
 
     my %ssl = map { $_ => delete $args{$_} } grep { /^SSL_/ } keys %args;
@@ -66,6 +71,7 @@ sub new {
     $sock->connect_SSL(Timeout => $left)
         or return _fail($sock, 'proxy: TLS handshake failed: ' . IO::Socket::SSL::errstr());
 
+    $sock->timeout($ioTimeout);
     $sock->blocking(0);
     return $sock;
 }

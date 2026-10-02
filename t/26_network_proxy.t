@@ -423,14 +423,14 @@ SKIP: {
 # skipped when unavailable. Net::HTTPS::NB is replaced by the stub above.
 # ---------------------------------------------------------------------------
 SKIP: {
-    skip 'Net::HTTP / IO::Socket::SSL not installed', 17
+    skip 'Net::HTTP / IO::Socket::SSL not installed', 21
         unless eval { require Net::HTTP; require IO::Socket::SSL; 1 };
     my $class = 'Plugins::SpotOn::Net::Socket::HTTPSConnect';
     my $dir = tempdir(CLEANUP => 1);
     my ($crt, $key) = ("$dir/c.pem", "$dir/k.pem");
     system("openssl req -x509 -newkey rsa:2048 -nodes -keyout $key -out $crt -days 2"
         . " -subj /CN=api.test -addext subjectAltName=DNS:api.test >/dev/null 2>&1");
-    skip 'openssl cannot create a test certificate', 17 unless -s $crt && -s $key;
+    skip 'openssl cannot create a test certificate', 21 unless -s $crt && -s $key;
 
     # Child side after CONNECT: TLS server presenting the api.test cert, echo.
     my $tls_echo = sub {
@@ -473,8 +473,13 @@ SKIP: {
         isa_ok($sock, 'Slim::Networking::Async::Socket::HTTPS');
         like(slurp($reqfile), qr/^CONNECT api\.test:443 HTTP\/1\.1\r\n/, 'new: CONNECT to the target, not PeerAddr');
         SKIP: {
-            skip 'no socket', 3 unless $sock;
+            skip 'no socket', 5 unless $sock;
             ok(!$sock->blocking, 'new: socket is non-blocking once established');
+            # LMS Async::write_async arms its "Timed out waiting for data"
+            # timer from io_socket_timeout: must be the caller's Timeout,
+            # not the 5 s handshake budget.
+            is(${*$sock}{io_socket_timeout}, 30, 'new: io_socket_timeout is the caller Timeout after the handshake');
+            is($sock->timeout, 30, 'new: ->timeout is the caller Timeout');
             is($sock->peerport, $port, 'new: TCP peer is the proxy');
             syswrite($sock, "hello\n");
             my $buf = '';
@@ -523,6 +528,18 @@ SKIP: {
         ($port) = $proxy_for_new->("HTTP/1.1 200 OK\r\n\r\n", $tls_echo);
         $sock = $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
         ok($sock, 'new: insecureHTTPS disables verification') or diag("error: $@");
+        is($sock && $sock->timeout, 30, 'new: insecure path also keeps the caller Timeout');
+        $sock->close if $sock;
+        set_pref(insecureHTTPS => 0);
+    }
+
+    {
+        # no Timeout from the caller: 30 s fallback, not the 5 s handshake budget
+        set_pref(insecureHTTPS => 1);
+        my ($port) = $proxy_for_new->("HTTP/1.1 200 OK\r\n\r\n", $tls_echo);
+        my %noTimeout = %base; delete $noTimeout{Timeout};
+        my $sock = $class->new(%noTimeout, ProxyAddr => '127.0.0.1', ProxyPort => $port);
+        is($sock && $sock->timeout, 30, 'new: io_socket_timeout falls back to 30 s');
         $sock->close if $sock;
         set_pref(insecureHTTPS => 0);
     }
