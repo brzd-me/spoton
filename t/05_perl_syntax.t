@@ -16,6 +16,7 @@ my @pm_files = (
     "$project_dir/Plugins/SpotOn/ProtocolHandler.pm",
     "$project_dir/Plugins/SpotOn/Helper.pm",
     "$project_dir/Plugins/SpotOn/Net.pm",
+    "$project_dir/Plugins/SpotOn/Net/Socket/HTTPSConnect.pm",
     "$project_dir/Plugins/SpotOn/Settings.pm",
     "$project_dir/Plugins/SpotOn/API/TokenManager.pm",
     "$project_dir/Plugins/SpotOn/API/Client.pm",
@@ -183,6 +184,12 @@ sub get  { }
 sub post { }
 sub AUTOLOAD { }
 sub can { 1 }
+1;
+END
+
+# Stub: Slim::Networking::Async::Socket::HTTPS (base of Net/Socket/HTTPSConnect.pm)
+write_stub($stub_dir, 'Slim::Networking::Async::Socket::HTTPS', <<'END');
+package Slim::Networking::Async::Socket::HTTPS;
 1;
 END
 
