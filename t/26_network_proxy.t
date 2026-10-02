@@ -760,6 +760,16 @@ SKIP: {
     set_pref(networkProxy => 'http://p:3128');
     new_async('https://example.com/', { insecureHTTPS => 1 })->new_socket(Host => 'example.com', PeerPort => 443);
     is($fake_connect_args{SSL_verify_mode}, 0, 'insecureHTTPS param disables verification in the tunnel');
+    {
+        # LMS 8.x's Async::HTTP may lack the insecureHTTPS accessor
+        my $old = new_async('https://example.com/');
+        no warnings 'redefine';
+        local *Slim::Networking::Async::HTTP::insecureHTTPS;
+        %fake_connect_args = ();
+        my $s = eval { $old->new_socket(Host => 'example.com', PeerPort => 443) };
+        is(ref $s, 'FakeHTTPSConnect', 'no insecureHTTPS method: tunnel still built') or diag($@);
+        ok(!exists $fake_connect_args{SSL_verify_mode}, 'no insecureHTTPS method: verification left on');
+    }
 
     # tunnel failure: the "proxy: ..." error reaches the caller's ecb as is
     {

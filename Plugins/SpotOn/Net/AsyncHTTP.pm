@@ -2,7 +2,10 @@ package Plugins::SpotOn::Net::AsyncHTTP;
 
 # Slim::Networking::Async::HTTP routed through the SpotOn network proxy:
 # - https: the socket is a CONNECT tunnel (Net::Socket::HTTPSConnect); the
-#   target hostname is never resolved locally (DNS is the proxy's job);
+#   target hostname is not resolved by LMS's async DNS (skipDNS), the proxy
+#   resolves it. Caveat: LMS Async::open still does a blocking local
+#   gethostbyname for dotless names even with skipDNS -- all Spotify hosts
+#   are dotted, so they are never resolved locally;
 # - http:  classic absolute-URI request to the proxy (use_proxy).
 # Every decision is taken from the *current* request URI, so redirects (LMS
 # rewrites $self->request->uri and calls send_request again on this object)
@@ -102,7 +105,8 @@ sub new_socket {
     $self->_spotonProxyError(undef);
 
     $args{SSL_hostname} //= $args{Host};
-    $args{SSL_verify_mode} //= 0 if $self->insecureHTTPS;    # SSL_VERIFY_NONE
+    # insecureHTTPS accessor: LMS 9.x (may be missing on older servers)
+    $args{SSL_verify_mode} //= 0 if $self->can('insecureHTTPS') && $self->insecureHTTPS;    # SSL_VERIFY_NONE
 
     my $sock = eval { require Plugins::SpotOn::Net::Socket::HTTPSConnect; 1 }
         ? Plugins::SpotOn::Net::Socket::HTTPSConnect->new(%args, ProxyAddr => $host, ProxyPort => $port,
@@ -116,7 +120,9 @@ sub new_socket {
 }
 
 # The target name must reach new_socket unresolved: the proxy resolves it
-# (local DNS may be poisoned on the networks this feature is for).
+# (local DNS may be poisoned on the networks this feature is for). skipDNS
+# skips LMS's async lookup; Async::open still resolves dotless names locally
+# (not the case for any Spotify host).
 sub write_async {
     my ($self, $args) = @_;
 
