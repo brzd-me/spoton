@@ -55,13 +55,41 @@ sub parseProxyUrl {
     # librespot's proxy socket has no default port and the url crate drops
     # ":80", so the binary refuses --proxy on port 80; reject it up front.
     return (undef, 'port80') if $port == 80;
-    return (undef, 'host') unless defined $host && length $host && $host !~ /\s/;
+    return (undef, 'host') unless _validHost($host);
 
     $host = lc $host;
     $port += 0;
     my $url = 'http://' . ($host =~ /:/ ? "[$host]" : $host) . ':' . $port;
 
     return ({ host => $host, port => $port, url => $url }, undef);
+}
+
+# Host syntax at least as strict as the binary's Url::parse, so a saved proxy
+# is never one the binary rejects (it would exit and the daemon crash-loop):
+# hostname chars (underscore allowed, as in Url::parse), a dotted-quad IPv4,
+# or an IPv6 literal (the brackets are already stripped).
+sub _validHost {
+    my ($host) = @_;
+
+    return 0 unless defined $host && length $host;
+
+    if ($host =~ /:/) {
+        return 0 unless $host =~ /^[0-9a-f:.]+$/i;
+        require Socket;
+        return defined Socket::inet_pton(Socket::AF_INET6(), $host) ? 1 : 0;
+    }
+
+    return 0 unless $host =~ /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.?$/;
+
+    # Url::parse treats a host whose last label is numeric as IPv4.
+    my ($last) = $host =~ /([^.]+)\.?$/;
+    if ($last =~ /^(?:[0-9]+|0x[0-9a-f]*)$/i) {
+        my @octets = split /\./, $host;
+        return 0 unless $host =~ /^[0-9.]+$/ && @octets == 4;
+        return 0 if grep { !/^[0-9]{1,3}$/ || $_ > 255 } @octets;
+    }
+
+    return 1;
 }
 
 sub currentProxy {

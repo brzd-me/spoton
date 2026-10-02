@@ -251,6 +251,20 @@ is((parseProxyUrl('socks5://host:1080'))[1], 'socks_unsupported', 'socks5');
 is((parseProxyUrl('socks://host:1080'))[1], 'socks_unsupported', 'socks');
 is((parseProxyUrl('garbage'))[1], 'scheme', 'garbage');
 is((parseProxyUrl('http://:3128'))[1], 'host', 'empty host');
+# host syntax as strict as the binary's Url::parse (saved but rejected by the
+# binary = daemon crash loop)
+is((parseProxyUrl("http://$_:3128"))[1], 'host', "invalid host '$_'")
+    for 'a<b', 'a b', 'a>b', 'a|b', 'a^b', 'a\\b', 'a%41', 'a"b', "a'b", 'a{b}', '.a', 'a..b',
+        'host.123', '999.1.1.1', '1.2.3.256', '1.2.3', 'a.0x1f';
+is((parseProxyUrl("http://pr\x{f6}xy:3128"))[1], 'host', 'non-ASCII host rejected');
+is((parseProxyUrl('http://[::g]:3128'))[1], 'host', 'invalid IPv6 literal');
+is((parseProxyUrl('http://[1:2]:3128'))[1], 'host', 'too short IPv6 literal');
+is((parseProxyUrl('http://[:::]:3128'))[1], 'host', 'IPv6 literal with ":::"');
+is((parseProxyUrl("http://$_->[0]:3128"))[0]{host}, $_->[1], "valid host '$_->[0]'")
+    for ['exa_mple.com', 'exa_mple.com'], ['my-proxy', 'my-proxy'], ['Proxy.LAN', 'proxy.lan'],
+        ['10.0.0.254', '10.0.0.254'], ['a1.b2', 'a1.b2'], ['proxy.lan.', 'proxy.lan.'], ['1host', '1host'];
+is((parseProxyUrl('http://[2001:db8::1]:3128'))[0]{url}, 'http://[2001:db8::1]:3128', 'IPv6 literal');
+is((parseProxyUrl('http://[::ffff:192.0.2.1]:3128'))[0]{host}, '::ffff:192.0.2.1', 'IPv6 with embedded IPv4');
 ok(!defined((parseProxyUrl('garbage'))[0]), 'no hashref on error');
 
 # currentProxy
