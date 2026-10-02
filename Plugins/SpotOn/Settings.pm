@@ -1219,6 +1219,17 @@ $action
 # Returns a downloadable text file with system info + daemon logs.
 # Only works when diagnosticMode pref is enabled (403 otherwise).
 # ============================================================
+sub _networkProxyDiagLine {
+    my $line = eval {
+        require Plugins::SpotOn::Net;
+        my $proxy = Plugins::SpotOn::Net::currentProxy();
+        my $l = 'Network proxy: ' . ($proxy ? $proxy->{url} : 'direct');
+        $l .= ' (blocked: binary lacks proxy support)' if Plugins::SpotOn::Net::proxyBlockedReason();
+        $l;
+    };
+    return $line // 'Network proxy: unknown';
+}
+
 sub _diagnosticBundleHandler {
     my ($httpClient, $response) = @_;
 
@@ -1262,6 +1273,7 @@ sub _diagnosticBundleHandler {
         "Active account: $redactedId",
         "Bitrate: " . ($prefs->get('bitrate') || 320),
         "Normalization: " . ($prefs->get('normalization') ? 'on' : 'off'),
+        _networkProxyDiagLine(),
         "Client-ID: $redactedClientId",
         "diagnosticMode: 1",
         '',

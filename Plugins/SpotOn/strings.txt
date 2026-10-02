@@ -3471,3 +3471,55 @@ PLUGIN_SPOTON_NETWORK_PROXY_BINARY_UNSUPPORTED
 	NO	Den valgte SpotOn-binærfilen støtter ikke proxyer. Avspilling og Connect er deaktivert til du velger den medfølgende binærfilen eller fjerner proxyen.
 	PL	Wybrany plik binarny SpotOn nie obsługuje proxy. Odtwarzanie i Connect są wyłączone, dopóki nie wybierzesz dołączonego pliku lub nie wyczyścisz proxy.
 	SV	Den valda SpotOn-binären stöder inte proxyer. Uppspelning och Connect är inaktiverade tills du väljer den medföljande binären eller rensar proxyn.
+
+PLUGIN_SPOTON_STATUS_NETWORK
+	CS	Síť
+	DA	Netværk
+	DE	Netzwerk
+	EN	Network
+	ES	Red
+	FR	Réseau
+	IT	Rete
+	NL	Netwerk
+	NO	Nettverk
+	PL	Sieć
+	SV	Nätverk
+
+PLUGIN_SPOTON_STATUS_NETWORK_DIRECT
+	CS	Přímé připojení
+	DA	Direkte forbindelse
+	DE	Direktverbindung
+	EN	Direct
+	ES	Conexión directa
+	FR	Connexion directe
+	IT	Connessione diretta
+	NL	Directe verbinding
+	NO	Direkte tilkobling
+	PL	Połączenie bezpośrednie
+	SV	Direktanslutning
+
+PLUGIN_SPOTON_STATUS_NETWORK_VIA_PROXY
+	CS	Přes proxy
+	DA	Via proxy
+	DE	Über Proxy
+	EN	Via proxy
+	ES	A través de proxy
+	FR	Via proxy
+	IT	Tramite proxy
+	NL	Via proxy
+	NO	Via proxy
+	PL	Przez proxy
+	SV	Via proxy
+
+PLUGIN_SPOTON_STATUS_NETWORK_BLOCKED
+	CS	Zablokováno: binárka nepodporuje proxy
+	DA	Blokeret: binærfilen understøtter ikke proxy
+	DE	Blockiert: Binärdatei unterstützt keinen Proxy
+	EN	Blocked: binary does not support proxies
+	ES	Bloqueado: el binario no admite proxy
+	FR	Bloqué : le binaire ne prend pas en charge les proxys
+	IT	Bloccato: il binario non supporta i proxy
+	NL	Geblokkeerd: binary ondersteunt geen proxy
+	NO	Blokkert: binærfilen støtter ikke proxy
+	PL	Zablokowano: plik binarny nie obsługuje proxy
+	SV	Blockerad: binärfilen stöder inte proxy
