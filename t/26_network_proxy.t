@@ -423,14 +423,14 @@ SKIP: {
 # skipped when unavailable. Net::HTTPS::NB is replaced by the stub above.
 # ---------------------------------------------------------------------------
 SKIP: {
-    skip 'Net::HTTP / IO::Socket::SSL not installed', 21
+    skip 'Net::HTTP / IO::Socket::SSL not installed', 32
         unless eval { require Net::HTTP; require IO::Socket::SSL; 1 };
     my $class = 'Plugins::SpotOn::Net::Socket::HTTPSConnect';
     my $dir = tempdir(CLEANUP => 1);
     my ($crt, $key) = ("$dir/c.pem", "$dir/k.pem");
     system("openssl req -x509 -newkey rsa:2048 -nodes -keyout $key -out $crt -days 2"
         . " -subj /CN=api.test -addext subjectAltName=DNS:api.test >/dev/null 2>&1");
-    skip 'openssl cannot create a test certificate', 21 unless -s $crt && -s $key;
+    skip 'openssl cannot create a test certificate', 32 unless -s $crt && -s $key;
 
     # Child side after CONNECT: TLS server presenting the api.test cert, echo.
     my $tls_echo = sub {
@@ -465,6 +465,9 @@ SKIP: {
     };
 
     my %base = (Host => 'api.test', PeerAddr => '192.0.2.1', PeerPort => 443, Timeout => 30);
+    no warnings 'once';
+    my $NC = \%Plugins::SpotOn::Net::Socket::HTTPSConnect::unreachable;
+    use warnings 'once';
 
     {
         my ($port, $reqfile) = $proxy_for_new->("HTTP/1.1 200 OK\r\n\r\n", $tls_echo);
@@ -500,6 +503,7 @@ SKIP: {
         my $sock = $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
         ok(!defined $sock, 'new: rejected CONNECT gives undef');
         is($@, 'proxy: CONNECT rejected: 403 Forbidden', 'new: rejection reason in $@');
+        ok(!exists $NC->{"127.0.0.1:$port"}, 'negative cache: CONNECT rejection (proxy reachable) is not cached');
     }
 
     {
@@ -508,6 +512,14 @@ SKIP: {
         my $sock = $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
         is($@, 'proxy: timeout', 'new: silent proxy times out');
         cmp_ok(time - $t0, '<', 7, 'new: handshake bounded by 5 s even with Timeout => 30');
+
+        # negative cache: the next attempt to the same proxy fails at once
+        $t0 = time;
+        $sock = $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
+        ok(!defined $sock, 'negative cache: timeout -> next attempt refused');
+        like($@, qr/^proxy: unreachable \(recent failure, retry in (?:29|30)s\)\z/, 'negative cache: error message');
+        cmp_ok(time - $t0, '<', 0.5, 'negative cache: no blocking handshake');
+        %$NC = ();
     }
 
     {
@@ -516,6 +528,39 @@ SKIP: {
         my $port = $l->sockport; close $l;
         my $sock = $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
         like($@, qr/^proxy: cannot connect to 127\.0\.0\.1:\d+: /, 'new: proxy down');
+
+        $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
+        like($@, qr/^proxy: unreachable \(recent failure, retry in \d+s\)\z/, 'negative cache: connect failure is cached');
+        my $l2 = IO::Socket::IP->new(Listen => 1, LocalHost => '127.0.0.1', LocalPort => 0);
+        my $port2 = $l2->sockport; close $l2;
+        $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port2);
+        like($@, qr/^proxy: cannot connect/, 'negative cache: keyed by proxy host:port');
+        {
+            my $base_t = time;
+            $NC->{"127.0.0.1:$port"} = $base_t + 30;
+            no warnings 'once';
+            local $Plugins::SpotOn::Net::Socket::HTTPSConnect::clock = sub { $base_t + 20 };
+            $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
+            like($@, qr/retry in (?:9|10)s\)\z/, 'negative cache: retry countdown');
+            local $Plugins::SpotOn::Net::Socket::HTTPSConnect::clock = sub { $base_t + 31 };
+            $class->new(%base, ProxyAddr => '127.0.0.1', ProxyPort => $port);
+            like($@, qr/^proxy: cannot connect/, 'negative cache: entry expires after 30 s');
+        }
+        %$NC = ();
+    }
+
+    {
+        # a successful handshake clears the entry; NoNegativeCache (settings
+        # Test button) ignores the cache
+        my ($port) = $proxy_for_new->("HTTP/1.1 200 OK\r\n\r\n", $tls_echo);
+        $NC->{"127.0.0.1:$port"} = time + 30;
+        $class->new(%base, SSL_ca_file => $crt, ProxyAddr => '127.0.0.1', ProxyPort => $port);
+        like($@, qr/^proxy: unreachable/, 'negative cache: cached proxy refused without the bypass flag');
+        my $sock = $class->new(%base, SSL_ca_file => $crt, ProxyAddr => '127.0.0.1', ProxyPort => $port,
+            NoNegativeCache => 1);
+        ok($sock, 'negative cache: NoNegativeCache bypasses the cache') or diag("error: $@");
+        ok(!exists $NC->{"127.0.0.1:$port"}, 'negative cache: success clears the entry');
+        $sock->close if $sock;
     }
 
     {
@@ -632,6 +677,7 @@ SKIP: {
     is($fake_connect_args{Host}, 'api.spotify.com', 'tunnel: target host passed through');
     is($fake_connect_args{PeerPort}, 443, 'tunnel: target port passed through');
     is($fake_connect_args{SSL_hostname}, 'api.spotify.com', 'tunnel: SNI set to the target');
+    ok(!$fake_connect_args{NoNegativeCache}, 'tunnel: normal requests use the negative cache');
     is_deeply(\@main::log_info, ['via proxy p:3128'], 'tunnel choice is logged');
     my %w = (host => 'api.spotify.com', port => 443);
     $a->write_async(\%w);
@@ -755,6 +801,7 @@ SKIP: {
     $h->get('https://apresolve.spotify.com/?type=accesspoint');
     is($fake_connect_args{ProxyAddr}, 'o', 'override hashref: tunnel to the override proxy');
     is($fake_connect_args{ProxyPort}, 9, 'override hashref: override port');
+    is($fake_connect_args{NoNegativeCache}, 1, 'override hashref (Test button): negative cache bypassed');
     is(new_async('http://example.com/', { proxyOverride => $ov })->use_proxy, 'o:9', 'override hashref: use_proxy');
     # ... undef means direct even with a pref set
     set_pref(networkProxy => 'http://p:3128');

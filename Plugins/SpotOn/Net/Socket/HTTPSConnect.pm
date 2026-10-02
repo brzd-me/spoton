@@ -4,6 +4,11 @@ package Plugins::SpotOn::Net::Socket::HTTPSConnect;
 # HTTP machinery exactly like Slim::Networking::Async::Socket::HTTPS.
 # The proxy handshake (TCP + CONNECT + TLS) is done blocking, bounded by
 # HANDSHAKE_TIMEOUT in total; the socket is non-blocking once returned.
+# Negative cache: the blocking handshake stalls the LMS main loop, so after a
+# timeout or a failed TCP connect to the proxy, further tunnels to that proxy
+# fail at once for NEGATIVE_CACHE_SECONDS (unless NoNegativeCache is passed,
+# as for the settings page's Test button). CONNECT rejections and TLS errors
+# are not cached: the proxy is reachable.
 
 use strict;
 use warnings;
@@ -11,16 +16,24 @@ use warnings;
 use base qw(Slim::Networking::Async::Socket::HTTPS);
 
 use IO::Select;
+use POSIX ();
 use Time::HiRes ();
 use Slim::Utils::Prefs;
 
 use constant HANDSHAKE_TIMEOUT => 5;
 use constant MAX_RESPONSE      => 8192;
+use constant NEGATIVE_CACHE_SECONDS => 30;
+
+# "proxyhost:port" => time until which tunnels to that proxy are refused
+our %unreachable;
+# clock for the negative cache (tests override it)
+our $clock = \&Time::HiRes::time;
 
 # Returns the socket, or undef with $@ = 'proxy: ...'.
 # %args are those of Slim::Networking::Async::Socket::HTTPS->new (Host and
 # PeerPort are the target; PeerAddr, the target's resolved address, is
-# replaced by the proxy) plus ProxyAddr / ProxyPort.
+# replaced by the proxy) plus ProxyAddr / ProxyPort and, optionally,
+# NoNegativeCache => 1 (ignore the negative cache for this attempt).
 #
 # Why not $class->SUPER::new(..., Blocking => 1): Slim's HTTPS::new forces
 # Blocking => 0, and Net::HTTPS::NB::new starts TLS right after the TCP
@@ -34,6 +47,8 @@ sub new {
 
     my $proxyAddr = delete $args{ProxyAddr};
     my $proxyPort = delete $args{ProxyPort};
+    my $noCache   = delete $args{NoNegativeCache};
+    my $cacheKey  = "$proxyAddr:$proxyPort";
     my $host      = $args{Host};
     my $port      = $args{PeerPort} || 443;
     # The caller's Timeout (LMS: request Timeout, Async::open default
@@ -41,6 +56,16 @@ sub new {
     # the handshake is done -- LMS Async::write_async arms its "Timed out
     # waiting for data" timer from it, as with Net::HTTPS::NB::new.
     my $ioTimeout = $args{Timeout} || 30;
+
+    if (!$noCache && defined(my $until = $unreachable{$cacheKey})) {
+        my $left = $until - $clock->();
+        if ($left > 0) {
+            $@ = sprintf('proxy: unreachable (recent failure, retry in %ds)', POSIX::ceil($left));
+            return undef;
+        }
+        delete $unreachable{$cacheKey};
+    }
+
     my $deadline  = Time::HiRes::time() + HANDSHAKE_TIMEOUT;
 
     my %ssl = map { $_ => delete $args{$_} } grep { /^SSL_/ } keys %args;
@@ -58,19 +83,29 @@ sub new {
         PeerPort => $proxyPort,
         Blocking => 1,
         Timeout  => HANDSHAKE_TIMEOUT,
-    ) or return _fail(undef, "proxy: cannot connect to $proxyAddr:$proxyPort: " . ($@ || $!));
+    ) or do {
+        _markUnreachable($cacheKey);
+        return _fail(undef, "proxy: cannot connect to $proxyAddr:$proxyPort: " . ($@ || $!));
+    };
 
     my ($ok, $err) = _tunnel($sock, $host, $port, $deadline - Time::HiRes::time());
-    return _fail($sock, $err) unless $ok;
+    unless ($ok) {
+        _markUnreachable($cacheKey) if $err eq 'proxy: timeout';
+        return _fail($sock, $err);
+    }
 
     $class->start_SSL($sock, %ssl, SSL_startHandshake => 0, PeerHost => $host)
         or return _fail($sock, 'proxy: TLS setup failed: ' . IO::Socket::SSL::errstr());
 
     my $left = $deadline - Time::HiRes::time();
-    return _fail($sock, 'proxy: timeout') if $left <= 0;
+    if ($left <= 0) {
+        _markUnreachable($cacheKey);
+        return _fail($sock, 'proxy: timeout');
+    }
     $sock->connect_SSL(Timeout => $left)
         or return _fail($sock, 'proxy: TLS handshake failed: ' . IO::Socket::SSL::errstr());
 
+    delete $unreachable{$cacheKey};
     $sock->timeout($ioTimeout);
     $sock->blocking(0);
     return $sock;
@@ -78,6 +113,11 @@ sub new {
 
 # close() is inherited from Slim::Networking::Async::Socket::HTTPS, which
 # removes the socket from Slim::Networking::Select (as LMS's HTTPSSocks does).
+
+sub _markUnreachable {
+    my ($key) = @_;
+    $unreachable{$key} = $clock->() + NEGATIVE_CACHE_SECONDS;
+}
 
 sub _fail {
     my ($sock, $err) = @_;

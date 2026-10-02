@@ -105,7 +105,9 @@ sub new_socket {
     $args{SSL_verify_mode} //= 0 if $self->insecureHTTPS;    # SSL_VERIFY_NONE
 
     my $sock = eval { require Plugins::SpotOn::Net::Socket::HTTPSConnect; 1 }
-        ? Plugins::SpotOn::Net::Socket::HTTPSConnect->new(%args, ProxyAddr => $host, ProxyPort => $port)
+        ? Plugins::SpotOn::Net::Socket::HTTPSConnect->new(%args, ProxyAddr => $host, ProxyPort => $port,
+            # proxyOverride requests (settings Test button) always try for real
+            ($self->_spotonOverride ? (NoNegativeCache => 1) : ()))
         : do { $@ = "proxy: TLS support unavailable: $@"; undef };
 
     $self->_spotonProxyError($@ || 'proxy: tunnel failed') unless $sock;
