@@ -11,7 +11,7 @@ use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Networking::SimpleAsyncHTTP;
 
-our @EXPORT_OK = qw(parseProxyUrl currentProxy proxyFor binaryProxyArgs);
+our @EXPORT_OK = qw(parseProxyUrl currentProxy proxyFor binaryProxyArgs proxyBlockedReason);
 
 my $prefs = preferences('plugin.spoton');
 my $log   = logger('plugin.spoton');
@@ -52,6 +52,9 @@ sub parseProxyUrl {
     }
 
     return (undef, 'port') unless defined $port && $port =~ /^[0-9]+$/ && $port >= 1 && $port <= 65535;
+    # librespot's proxy socket has no default port and the url crate drops
+    # ":80", so the binary refuses --proxy on port 80; reject it up front.
+    return (undef, 'port80') if $port == 80;
     return (undef, 'host') unless defined $host && length $host && $host !~ /\s/;
 
     $host = lc $host;
@@ -87,6 +90,14 @@ sub proxyFor {
 sub binaryProxyArgs {
     my $proxy = currentProxy() or return ();
     return ('--proxy', $proxy->{url});
+}
+
+# Fail-closed guard for spawning the spoton binary: a proxy is configured but
+# the binary cannot take --proxy. Returns undef (ok) or 'binary_no_proxy'.
+sub proxyBlockedReason {
+    return undef unless currentProxy();
+    require Plugins::SpotOn::Helper;
+    return Plugins::SpotOn::Helper->getCapability('proxy') ? undef : 'binary_no_proxy';
 }
 
 # Class method, drop-in for Slim::Networking::SimpleAsyncHTTP->new.

@@ -26,6 +26,12 @@ BEGIN {
     *Slim::Utils::Log::info = sub { push @main::log_info, $_[1] };
 
     # Minimal URI / HTTP::Request stand-ins (libwww is not core).
+    # Capability lookup used by Net::proxyBlockedReason.
+    package Plugins::SpotOn::Helper;
+    our %caps;
+    sub getCapability { $caps{$_[1]} }
+    $INC{'Plugins/SpotOn/Helper.pm'} = 1;
+
     package FakeURI;
     use overload '""' => sub { $_[0]{str} }, fallback => 1;
     sub new {
@@ -207,7 +213,7 @@ BEGIN {
 
 use FindBin qw($Bin);
 use lib "$Bin/..";
-use Plugins::SpotOn::Net qw(parseProxyUrl currentProxy proxyFor binaryProxyArgs);
+use Plugins::SpotOn::Net qw(parseProxyUrl currentProxy proxyFor binaryProxyArgs proxyBlockedReason);
 
 sub set_pref { Slim::Utils::Prefs->set(@_) }
 
@@ -221,6 +227,10 @@ is((parseProxyUrl('HTTP://Host:3128'))[0]{url}, 'http://host:3128', 'case normal
 is((parseProxyUrl('http://host:65535'))[0]{port}, 65535, 'max port');
 
 # parseProxyUrl - errors
+is((parseProxyUrl('http://h:80'))[1], 'port80', 'port 80 rejected (librespot cannot connect)');
+is((parseProxyUrl('http://[::1]:80'))[1], 'port80', 'IPv6 port 80 rejected');
+is((parseProxyUrl('http://h:8080'))[0]{port}, 8080, 'port 8080 still valid');
+is((parseProxyUrl('http://h:0'))[1], 'port', 'port 0 stays a generic port error');
 is((parseProxyUrl(''))[1], 'empty', 'empty');
 is((parseProxyUrl(undef))[1], 'empty', 'undef');
 is((parseProxyUrl('   '))[1], 'empty', 'blank');
@@ -758,6 +768,23 @@ SKIP: {
     set_pref(networkProxy => 'http://p:3128');
     is(new_async('http://example.com/')->use_proxy, 'p:3128', 'networkProxy overrides webproxy for http');
     set_pref(webproxy => '');
+    set_pref(networkProxy => '');
+}
+
+# ---------------------------------------------------------------------------
+# spawn: fail closed when the binary cannot take --proxy
+# ---------------------------------------------------------------------------
+{
+    set_pref(networkProxy => 'http://p:3128');
+    $Plugins::SpotOn::Helper::caps{proxy} = 1;
+    is(proxyBlockedReason(), undef, 'proxy + capability: not blocked');
+    $Plugins::SpotOn::Helper::caps{proxy} = undef;
+    is(proxyBlockedReason(), 'binary_no_proxy', 'proxy without capability: blocked');
+    set_pref(networkProxy => '');
+    is(proxyBlockedReason(), undef, 'no proxy: never blocked');
+    set_pref(networkProxy => 'http://h:80');
+    $Plugins::SpotOn::Helper::caps{proxy} = undef;
+    is(proxyBlockedReason(), undef, 'invalid proxy (not in effect) is not blocked');
     set_pref(networkProxy => '');
 }
 

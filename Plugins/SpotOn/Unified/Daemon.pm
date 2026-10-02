@@ -95,6 +95,14 @@ sub start {
 		return;
 	}
 
+	# Fail closed: never start the daemon directly when a proxy is configured
+	# but the binary cannot route through it.
+	require Plugins::SpotOn::Net;
+	if (Plugins::SpotOn::Net::proxyBlockedReason()) {
+		$log->error("SpotOn Unified daemon: proxy is configured but SpotOn binary lacks proxy support — not starting");
+		return;
+	}
+
 	# GH #143: static group suffix instead of composed syncname; single
 	# source of truth lives in DaemonManager::deviceNameForClient (CON-06).
 	require Plugins::SpotOn::Unified::DaemonManager;
@@ -136,6 +144,9 @@ sub start {
 	push @helperArgs, '--bitrate', $bitrate;
 
 	push @helperArgs, '--enable-volume-normalisation' if $prefs->get('normalization');
+
+	# Network proxy (empty list when none is configured).
+	push @helperArgs, Plugins::SpotOn::Net::binaryProxyArgs();
 
 	# D-07 / D-01: Connect is conditional on per-player toggle.
 	# The unified daemon always starts (credential-gated), but --enable-connect
