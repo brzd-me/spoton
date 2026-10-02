@@ -1,7 +1,7 @@
 package Plugins::SpotOn::Net;
 
 # Network proxy support: proxy URL validation, bypass rules and HTTP factory.
-# Pure logic only; the proxied transport lives in later layers.
+# The proxied transport lives in Net::SimpleAsyncHTTP / Net::AsyncHTTP.
 
 use strict;
 use warnings;
@@ -51,7 +51,7 @@ sub parseProxyUrl {
         return (undef, 'host');
     }
 
-    return (undef, 'port') unless defined $port && $port =~ /^\d+$/ && $port >= 1 && $port <= 65535;
+    return (undef, 'port') unless defined $port && $port =~ /^[0-9]+$/ && $port >= 1 && $port <= 65535;
     return (undef, 'host') unless defined $host && length $host && $host !~ /\s/;
 
     $host = lc $host;
@@ -78,7 +78,7 @@ sub proxyFor {
     if ($str =~ m{^[a-z][a-z0-9+.-]*://(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]*)}i) {
         my $dest = lc $1;
         $dest =~ s/^\[|\]$//g;
-        return () if $dest eq 'localhost' || $dest eq '::1' || $dest =~ /^127\./;
+        return () if $dest eq 'localhost' || $dest eq '::1' || $dest =~ /^127(?:\.[0-9]{1,3}){3}$/;
     }
 
     return ($proxy->{host}, $proxy->{port});
@@ -89,9 +89,18 @@ sub binaryProxyArgs {
     return ('--proxy', $proxy->{url});
 }
 
-# Class method. Proxied transport is added in a later task.
+# Class method, drop-in for Slim::Networking::SimpleAsyncHTTP->new.
+# Without a proxy (and without a proxyOverride key in %params) this is exactly
+# the stock class. Otherwise the subclass routes the request via the proxy
+# (proxyOverride: hashref from parseProxyUrl = that proxy, undef = direct).
 sub http {
     my ($class, $cb, $ecb, $params) = @_;
+
+    if ((ref $params eq 'HASH' && exists $params->{proxyOverride}) || currentProxy()) {
+        require Plugins::SpotOn::Net::SimpleAsyncHTTP;
+        return Plugins::SpotOn::Net::SimpleAsyncHTTP->new($cb, $ecb, $params);
+    }
+
     return Slim::Networking::SimpleAsyncHTTP->new($cb, $ecb, $params);
 }
 
