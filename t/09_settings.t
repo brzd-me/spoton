@@ -1354,7 +1354,7 @@ SKIP: {
 # Network proxy setting (Task 7): validation, save, Test endpoint
 # ============================================================
 SKIP: {
-    skip "Settings.pm module required for network proxy tests", 14
+    skip "Settings.pm module required for network proxy tests", 18
         unless eval { require Plugins::SpotOn::Settings; require Plugins::SpotOn::Net; 1 };
 
     my $prefs = Slim::Utils::Prefs::preferences('plugin.spoton');
@@ -1424,6 +1424,15 @@ SKIP: {
     $r = $call->('proxy=');
     ok(exists $http_calls[0]{proxyOverride} && !defined $http_calls[0]{proxyOverride},
         'proxy test: empty value tests the direct connection (proxyOverride undef)');
+
+    # Net->http dying must still produce exactly one JSON error reply
+    {
+        local *Plugins::SpotOn::Net::http = sub { die "boom in http\n" };
+        $r = $call->('proxy=http://h:3128');
+        is($r->{status}, 'error', 'proxy test: die in Net->http -> error reply');
+        is($r->{message}, 'boom in http', 'proxy test: die message returned without trailing newline');
+        is(scalar @Slim::Web::HTTP::http_responses, 1, 'proxy test: exactly one reply on die');
+    }
 }
 
 done_testing();

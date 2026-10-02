@@ -1421,18 +1421,30 @@ sub _proxyTestHandler {
     require Time::HiRes;
     my $start = Time::HiRes::time();
 
-    Plugins::SpotOn::Net->http(
-        sub {
-            my $ms = int((Time::HiRes::time() - $start) * 1000);
-            _jsonResponse($httpClient, $response, { status => 'ok', ms => $ms });
-        },
-        sub {
-            my ($http, $error) = @_;
-            _jsonResponse($httpClient, $response,
-                { status => 'error', message => ($error // 'unknown error') . '' });
-        },
-        { timeout => 10, proxyOverride => $parsed },
-    )->get('https://apresolve.spotify.com/?type=accesspoint');
+    my $replied = 0;
+    my $reply = sub {
+        return if $replied++;
+        _jsonResponse($httpClient, $response, $_[0]);
+    };
+
+    eval {
+        Plugins::SpotOn::Net->http(
+            sub {
+                my $ms = int((Time::HiRes::time() - $start) * 1000);
+                $reply->({ status => 'ok', ms => $ms });
+            },
+            sub {
+                my ($http, $error) = @_;
+                $reply->({ status => 'error', message => ($error // 'unknown error') . '' });
+            },
+            { timeout => 10, proxyOverride => $parsed },
+        )->get('https://apresolve.spotify.com/?type=accesspoint');
+        1;
+    } or do {
+        my $msg = "$@";
+        $msg =~ s/\s+\z//;
+        $reply->({ status => 'error', message => $msg || 'unknown error' });
+    };
 }
 
 sub _jsonResponse {
