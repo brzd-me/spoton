@@ -139,21 +139,9 @@ If the Status page shows `API Limits: Search 10 | Library 10 | Playlists 20` (or
 
 ### Using a proxy
 
-**When to use it:** your network cannot reach Spotify directly (restricted region, corporate or ISP filtering) but you have an HTTP proxy that can.
+**When to use it:** your network cannot reach Spotify directly (restricted region, corporate or ISP filtering) but you have an HTTP proxy that can. Any HTTP proxy that supports `CONNECT` works, for example Squid, tinyproxy, or the HTTP port of an xray/sing-box/Clash client.
 
 **Setup:** in SpotOn Settings, enter the proxy in the **Network proxy** field as `http://host:port` (for example `http://192.168.1.10:8888`) and press **Test**. When you save a changed proxy (set, changed, or cleared), the running SpotOn daemons restart within a few seconds to pick it up, even during playback; saving without changing it does not restart them. Leave the field empty for a direct connection.
-
-**Example with tinyproxy** (on a machine that can reach Spotify):
-
-```bash
-# Docker
-docker run -d --name tinyproxy -p 8888:8888 vimagick/tinyproxy
-# or a native install
-brew install tinyproxy        # macOS
-sudo apt install tinyproxy    # Debian/Ubuntu
-```
-
-By default tinyproxy only accepts local clients. Add an `Allow` line for your LMS host (or LAN, e.g. `Allow 192.168.1.0/24`) in `tinyproxy.conf` and restart it.
 
 **Limitations:**
 - Port 80 is not supported (the playback binary cannot use a port-80 proxy); use another port.
