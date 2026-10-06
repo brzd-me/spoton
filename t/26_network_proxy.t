@@ -324,7 +324,9 @@ require_ok('Plugins::SpotOn::Net::Socket::HTTPSConnect');
 *_tunnel = \&Plugins::SpotOn::Net::Socket::HTTPSConnect::_tunnel;
 
 my @children;
-END { kill 'KILL', @children if @children; waitpid($_, 0) for @children }
+# local $?: waitpid on a SIGKILLed child sets $? = 9, which would otherwise
+# become the test's exit status after all tests passed.
+END { local $?; kill 'KILL', @children if @children; waitpid($_, 0) for @children }
 
 # Fake proxy: listens on $addr, forks a child that accepts one connection,
 # reads the request up to \r\n\r\n, stores it in a file and then plays the
