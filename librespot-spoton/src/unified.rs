@@ -862,6 +862,14 @@ async fn unified_http_server(
                                             *last_activity_relay.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
                                         }
                                         None => {
+                                            // No audio to forward, so the send above can't
+                                            // notice that LMS hung up. Check explicitly, or a
+                                            // relay whose client left during silence keeps
+                                            // relay_active set until the 60s force-clear.
+                                            if conn_tx.is_closed() {
+                                                log::debug!("[spoton/unified] /stream: relay client disconnected while idle");
+                                                break;
+                                            }
                                             tokio::time::sleep(Duration::from_millis(1)).await;
                                         }
                                     }
@@ -1677,6 +1685,18 @@ pub async fn run_unified(
             Some(tokio::spawn(spirc_task));
         let mut current_discovery = discovery;
 
+        // Session watchdog. Spirc only re-checks session.is_invalid() when one of
+        // its streams yields, so after the access point drops the connection it
+        // keeps running on a dead session until the next player event — usually
+        // the next track load, which then fails with "audio key response timeout"
+        // because it still goes through the dead session. Poll for that here and
+        // reconnect while the current track is still playing from its buffer.
+        let mut session_watchdog = tokio::time::interval(Duration::from_secs(2));
+        session_watchdog.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Set when the watchdog tore down Spirc while audio was flowing to LMS:
+        // the new Spirc then takes the playback back via transfer.
+        let mut resume_after_reconnect = false;
+
         loop {
             tokio::select! {
                 // ZeroConf new credentials (Pitfall 6: reconnect path).
@@ -1722,6 +1742,12 @@ pub async fn run_unified(
                         }
                         if let Some(ref cp) = connect_player_opt {
                             cp.set_session(ns.clone());
+                            // The loaded track still streams through the dead session.
+                            // Spotify's resume/transfer reloads the same track, which the
+                            // player turns into a seek on that stream — and the seek blocks
+                            // the player thread forever waiting for data that never comes.
+                            // Stopping forces a fresh load through the new session.
+                            cp.stop();
                         }
                         ns
                     } else {
@@ -1745,6 +1771,16 @@ pub async fn run_unified(
                             mf(MixerConfig::default()).unwrap_or_else(|_| panic!("mixer")),
                         ).await {
                             Ok((new_spirc, new_task)) => {
+                                if std::mem::take(&mut resume_after_reconnect) {
+                                    // Transfer from this device to itself: Spotify hands
+                                    // back the playback state it kept for us (track,
+                                    // context, position). Queued until the new Spirc is
+                                    // connected.
+                                    match new_spirc.transfer(None) {
+                                        Ok(()) => log::info!("[spoton/unified] Resuming playback after session reconnect"),
+                                        Err(e) => log::warn!("[spoton/unified] Resume after session reconnect failed: {e}"),
+                                    }
+                                }
                                 {
                                     let mut guard = spirc_handle.lock().unwrap_or_else(|e| e.into_inner());
                                     *guard = Some(new_spirc);
@@ -1846,6 +1882,7 @@ pub async fn run_unified(
                             }
                             Err(e) => {
                                 browse_reconnect_pending.store(false, Ordering::Release);
+                                resume_after_reconnect = false;
                                 log::error!("[spoton/unified] Spirc reconnect failed: {e}");
                                 break;
                             }
@@ -1886,6 +1923,45 @@ pub async fn run_unified(
                     }
 
                     connecting = true;
+                },
+
+                // Session watchdog tick (see session_watchdog above).
+                _ = session_watchdog.tick(), if current_spirc_task.is_some() && !connecting => {
+                    let invalid = session_shared.lock().await.is_invalid();
+                    if invalid {
+                        const RECONNECT_RATE_LIMIT: usize = 5;
+                        let rate_window = Duration::from_secs(60);
+                        reconnect_times.retain(|&t: &std::time::Instant| t.elapsed() < rate_window);
+                        if last_credentials.is_some() && reconnect_times.len() < RECONNECT_RATE_LIMIT {
+                            reconnect_times.push(std::time::Instant::now());
+
+                            // Audio reached LMS within the last few seconds: we were
+                            // the playing Connect device when the session died.
+                            let was_streaming = spirc_active.load(Ordering::SeqCst) && {
+                                let t = last_activity.lock().unwrap_or_else(|e| e.into_inner());
+                                t.elapsed() < Duration::from_secs(10)
+                            };
+                            log::warn!(
+                                "[spoton/unified] Session invalidated (access point connection lost) — reconnecting now, resume={}",
+                                was_streaming
+                            );
+
+                            // Drop Spirc without SpircCommand::Shutdown: that pauses the
+                            // player, while the current track can keep playing from
+                            // its buffer until the new Spirc takes over.
+                            {
+                                let mut guard = spirc_handle.lock().unwrap_or_else(|e| e.into_inner());
+                                *guard = None;
+                            }
+                            if let Some(task) = current_spirc_task.take() {
+                                task.abort();
+                            }
+                            spirc_active.store(false, Ordering::SeqCst);
+                            resume_after_reconnect = was_streaming;
+                            connecting = true;
+                        }
+                        // Over the rate limit: leave it to the "Spirc task died" path.
+                    }
                 },
 
                 // Spirc task died — attempt reconnect with backoff.
